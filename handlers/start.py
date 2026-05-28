@@ -1,5 +1,6 @@
 """
 /start и главное меню
+ФИКС: кнопка "Меню" под алертом шлёт НОВОЕ сообщение!
 """
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
@@ -31,7 +32,12 @@ async def is_active(user: dict) -> bool:
 
 
 async def show_menu(target, user: dict, edit: bool = True):
+    """
+    Показывает главное меню.
+    ФИКС: если edit=True но сообщение фото/медиа — шлём НОВОЕ!
+    """
     user_id = user["user_id"]
+
     if await is_active(user):
         current = await db.get_user_tracking_count(user_id)
         mx = get_account_limit(user["tier"])
@@ -49,15 +55,21 @@ async def show_menu(target, user: dict, edit: bool = True):
             text = get_text("welcome_new")
             kb = welcome_keyboard(True)
 
-    if edit and hasattr(target, 'message'):
-        try:
-            await target.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-        except Exception:
-            # Если сообщение — фото/медиа, edit_text не работает → шлём новое
-            await target.message.answer(text, reply_markup=kb, parse_mode="HTML")
+    # Определяем целевое сообщение
+    if hasattr(target, 'message'):
+        msg = target.message
     else:
-        msg_target = target.message if hasattr(target, 'message') else target
-        await msg_target.answer(text, reply_markup=kb, parse_mode="HTML")
+        msg = target
+
+    if edit:
+        try:
+            await msg.edit_text(text, reply_markup=kb, parse_mode="HTML")
+            return
+        except Exception:
+            pass
+
+    # Отправляем новое сообщение
+    await msg.answer(text, reply_markup=kb, parse_mode="HTML")
 
 
 async def resolve_referrer(ref_code: str, user_id: int):
@@ -98,14 +110,21 @@ async def cmd_start(message: Message):
 
 @router.callback_query(F.data == "main")
 async def cb_main(callback: CallbackQuery):
+    """
+    Главное меню по кнопке "Меню"
+    ФИКС: всегда шлём НОВОЕ сообщение чтобы алерт оставался!
+    """
     user = await db.get_user(callback.from_user.id)
     if not user:
         await callback.answer("Напишите /start")
         return
     if user.get("banned"):
-        await callback.message.edit_text(get_text("banned"))
+        await callback.message.answer(get_text("banned"))
+        await callback.answer()
         return
-    await show_menu(callback, user)
+
+    # ФИКС: Всегда шлём НОВОЕ сообщение, чтобы алерт оставался нетронутым!
+    await show_menu(callback, user, edit=False)
     await callback.answer()
 
 
@@ -117,15 +136,20 @@ async def cb_trial(callback: CallbackQuery):
         await callback.answer(get_text("trial_already_used"), show_alert=True)
         return
     if await db.activate_trial(uid):
-        await callback.message.edit_text(get_text("trial_activated"),
-            reply_markup=main_menu_keyboard(0, TRIAL_ACCOUNTS), parse_mode="HTML")
+        await callback.message.edit_text(
+            get_text("trial_activated"),
+            reply_markup=main_menu_keyboard(0, TRIAL_ACCOUNTS),
+            parse_mode="HTML"
+        )
     else:
         await callback.answer(get_text("trial_already_used"), show_alert=True)
 
 
 @router.callback_query(F.data == "help")
 async def cb_help(callback: CallbackQuery):
-    await callback.message.edit_text(get_text("help", support=SUPPORT_USERNAME),
-        reply_markup=back_keyboard(), parse_mode="HTML")
+    await callback.message.edit_text(
+        get_text("help", support=SUPPORT_USERNAME),
+        reply_markup=back_keyboard(),
+        parse_mode="HTML"
+    )
     await callback.answer()
-
